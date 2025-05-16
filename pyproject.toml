@@ -1,0 +1,25 @@
+[project]
+name = "pdf-to-markdown"
+version = "0.1.0"
+description = "MarkItDown plugin for extracting all content from PDFs, prioritizing correctness over speed."
+authors = [
+    {name = "dries.degroote@inect.be", email = "dries.degroote@inect.be"}
+]
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "pymupdf (>=1.25.5,<2.0.0)",
+    "pymupdf4llm (>=0.0.24,<0.0.25)",
+    "pillow (>=11.2.1,<12.0.0)",
+    "tqdm (>=4.67.1,<5.0.0)",
+    "markitdown[all] (>=0.1.1,<0.2.0)",
+    "tenacity (>=9.1.2,<10.0.0)",
+    "openai (>=1.78.1,<2.0.0)"
+]
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[project.entry-points."markitdown.plugin"]
+mupdf-to-markdown = "pdf_to_markdown.markitdown_mupdf_converter"
