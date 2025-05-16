@@ -1,6 +1,6 @@
 # MarkItDown PDF Converter Plugin
 
-This project provides a **MarkItDown plugin** for converting PDF files to Markdown with a strong emphasis on extracting _all_ content, including text, tables, and images—even from challenging or scanned documents. The plugin is designed for **correctness over speed**, ensuring that as much information as possible is preserved in the Markdown output.
+This project provides a **MarkItDown plugin** for converting PDF files to Markdown with an emphasis on extracting _all_ content, including text, tables, and images—even from challenging or scanned documents. The plugin is designed for **correctness over speed**, ensuring that as much information as possible is preserved in the Markdown output.
 
 ## Features
 
@@ -20,10 +20,10 @@ This project provides a **MarkItDown plugin** for converting PDF files to Markdo
 
 - Python 3.11+
 - [PyMuPDF](https://pymupdf.readthedocs.io/) (`pymupdf`)
-- [pymupdf4llm](https://github.com/markitdown-ai/pymupdf4llm`)
-- [Pillow](https://python-pillow.org/)
+- [pymupdf4llm](https://pymupdf.readthedocs.io/en/latest/pymupdf4llm/index.html)
+- [Pillow](https://pillow.readthedocs.io/en/stable/reference/Image.html)
 - [tqdm](https://tqdm.github.io/) (for progress bars)
-- [markitdown](https://github.com/markitdown-ai/markitdown)
+- [markitdown](https://github.com/microsoft/markitdown/tree/main)
 - An LLM client (e.g., OpenAI Python SDK) for OCR fallback
 
 All dependencies are listed in `pyproject.toml`.
@@ -36,11 +36,18 @@ All dependencies are listed in `pyproject.toml`.
    cd pdf-to-markdown
    ```
 2. **Install dependencies** (using [Poetry](https://python-poetry.org/) or pip):
+   
+   **Using Poetry (recommended):**
    ```bash
    poetry install
-   # or
-   pip install -r requirements.txt
    ```
+
+   **Using pip:**
+   If you are not using Poetry, you can install the package and its dependencies directly from the project directory (which reads `pyproject.toml`):
+   ```bash
+   pip install .
+   ```
+   (If this package were published on PyPI, you would typically use `pip install pdf-to-markdown`.)
 
 ## Using as a Standalone Library
 
@@ -137,8 +144,9 @@ if __name__ == "__main__":
 
 1.  **Import necessary modules**: `asyncio`, `pdf_to_markdown`, `pdf_to_markdown_sync`, `LLMBasedOCRService`, and your chosen LLM client library (`openai` or `google.generativeai`).
 2.  **Set up LLM Client**: 
-    *   **OpenAI**: Install with `pip install openai`. Initialize `OpenAI()`. It uses `OPENAI_API_KEY` from environment variables or passed directly.
+    *   **OpenAI**: 
     *   **Google Gemini (OpenAI-compatible API)**: You can also use Google's Gemini models through their OpenAI-compatible endpoint. Install `openai` and initialize the `OpenAI` client with `base_url="https://generativelanguage.googleapis.com/v1beta/openai/"` and your `GEMINI_API_KEY`. This allows using Gemini models (like `"gemini-1.5-flash-latest"`) with the existing `LLMBasedOCRService` without needing a separate client library or wrapper. The example defaults to using the standard OpenAI client but shows how to configure for Gemini.
+    * Every provider that can accessed through the openai client can be used out of the box for the LLMBasedOCRService.
 3.  **Initialize `LLMBasedOCRService`**: Pass the chosen LLM client and model name.
 4.  **Call Conversion Functions**:
     *   `pdf_to_markdown` (async): Use with `await` inside an `async` function (e.g., `run_async_conversion`).
@@ -149,7 +157,7 @@ This setup allows you to leverage the PDF parsing and OCR capabilities of the pa
 
 ### Model Choice Considerations
 
-When selecting an LLM for OCR, consider factors like accuracy, speed, and cost. According to benchmark results from the [Omni OCR Benchmark](https://github.com/getomni-ai/benchmark) (as of the time of writing), Google's `gemini-1.5-flash` (or newer flash versions) is often highlighted as a strong contender for its balance of good performance, speed, and cost-effectiveness for OCR tasks. However, always refer to the latest benchmark data and your specific project requirements when making a decision.
+When selecting an LLM for OCR, consider factors like accuracy, speed, and cost. According to benchmark results from the [Omni OCR Benchmark](https://github.com/getomni-ai/benchmark) (as of the time of writing), Google's `gemini-2.0-flash` (or newer flash versions) is often highlighted as a strong contender for its balance of good performance, speed, and cost-effectiveness for OCR tasks. However, always refer to the latest benchmark data and your specific project requirements when making a decision.
 
 ## Usage
 
