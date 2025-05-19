@@ -7,7 +7,7 @@ class TableDetectionError(Exception):
     """Custom exception for errors during table detection."""
     pass
 
-class TableInterface(ABC):
+class TableDetectionInterface(ABC):
     """
     Interface for services that can detect the presence of tables on a PDF page.
     """

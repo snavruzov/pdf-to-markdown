@@ -5,7 +5,7 @@ import logging
 from typing import Optional
 
 from PIL import Image
-from pdf_to_markdown.table_services.table_service_interface import TableInterface, TableDetectionError
+from pdf_to_markdown.table_detection_services.table_detection_service_interface import TableDetectionInterface, TableDetectionError
 from pdf_to_markdown.pdf_handling.page_renderer import render_page_to_pil_image
 
 pymupdf.TOOLS.mupdf_display_warnings(False)
@@ -112,16 +112,16 @@ def is_page_covered_by_image(page: pymupdf.Page) -> bool:
 
 
 # ----- Helper for table detection -----
-def _check_for_tables_with_service(page: pymupdf.Page, table_service: TableInterface) -> bool:
+def _check_for_tables_with_service(page: pymupdf.Page, table_detection_service: TableDetectionInterface) -> bool:
     """
-    Renders a page and uses the provided table_service to detect tables.
+    Renders a page and uses the provided table_detection_service to detect tables.
     Returns True if tables are detected, False otherwise or on error.
     """
-    logger.debug(f"Page {page.number}: Checking for tables with TableService.")
+    logger.debug(f"Page {page.number}: Checking for tables with TableDetectionService.")
     pil_image_for_table_detection = None
     DEFAULT_DPI_FOR_TABLE_DETECTION = 150 # Default if service gives no specific config
     try:
-        render_config = table_service.get_best_size()
+        render_config = table_detection_service.get_best_size()
         pil_image_for_table_detection = render_page_to_pil_image(
             page=page, 
             render_config=render_config, 
@@ -129,16 +129,16 @@ def _check_for_tables_with_service(page: pymupdf.Page, table_service: TableInter
             purpose="table detection"
         )
         
-        if table_service.detect_tables_on_page(pil_image_for_table_detection):
-            logger.info(f"Page {page.number}: Tables DETECTED by TableService.")
+        if table_detection_service.detect_tables_on_page(pil_image_for_table_detection):
+            logger.info(f"Page {page.number}: Tables DETECTED by TableDetectionService.")
             return True
         else:
-            logger.debug(f"Page {page.number}: No tables detected by TableService.")
+            logger.debug(f"Page {page.number}: No tables detected by TableDetectionService.")
             return False
     except TableDetectionError as e:
-        logger.error(f"Page {page.number}: TableService detection failed: {e}. Assuming no tables for this check.", exc_info=True)
+        logger.error(f"Page {page.number}: TableDetectionService detection failed: {e}. Assuming no tables for this check.", exc_info=True)
     except Exception as e:
-        logger.error(f"Page {page.number}: Unexpected error during TableService image rendering or detection: {e}. Assuming no tables.", exc_info=True)
+        logger.error(f"Page {page.number}: Unexpected error during TableDetectionService image rendering or detection: {e}. Assuming no tables.", exc_info=True)
     finally:
         if pil_image_for_table_detection:
             try:
@@ -149,7 +149,7 @@ def _check_for_tables_with_service(page: pymupdf.Page, table_service: TableInter
 
 
 # ----- ocr needed -----
-def ocr_needed(page: pymupdf.Page, table_service: Optional[TableInterface] = None) -> bool:
+def ocr_needed(page: pymupdf.Page, table_detection_service: Optional[TableDetectionInterface] = None) -> bool:
     """
     Determines if OCR is needed for a given page based on a set of criteria,
     including an optional table detection service.
@@ -175,13 +175,13 @@ def ocr_needed(page: pymupdf.Page, table_service: Optional[TableInterface] = Non
         logger.debug(f"Page {page.number}: OCR needed (covered by image, implies text might be part of image).")
         return True
 
-    # If none of the above heuristics triggered, and a table_service is provided, delegate to it.
-    if table_service:
-        logger.debug(f"Page {page.number}: Standard heuristics passed. Delegating to TableService for table check.")
-        if _check_for_tables_with_service(page, table_service):
+    # If none of the above heuristics triggered, and a table_detection_service is provided, delegate to it.
+    if table_detection_service:
+        logger.debug(f"Page {page.number}: Standard heuristics passed. Delegating to TableDetectionService for table check.")
+        if _check_for_tables_with_service(page, table_detection_service):
             # The helper function already logs its findings (detection or errors)
             # ocr_needed just uses the boolean result here.
             return True # OCR is needed if tables are found by the service
 
-    logger.debug(f"Page {page.number}: OCR not needed by any heuristic or TableService (if active).")
+    logger.debug(f"Page {page.number}: OCR not needed by any heuristic or TableDetectionService (if active).")
     return False

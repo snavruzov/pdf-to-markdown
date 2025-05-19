@@ -8,7 +8,8 @@ from typing import Any, Optional, Union
 from PIL import Image
 from tenacity import retry, stop_after_delay, wait_exponential, retry_if_exception, wait_random
 
-from pdf_to_markdown.table_services.table_service_interface import TableInterface, TableDetectionError
+# Updated import path and class name
+from pdf_to_markdown.table_detection_services.table_detection_service_interface import TableDetectionInterface, TableDetectionError
 
 logger = logging.getLogger(__name__)
 
@@ -28,9 +29,9 @@ def _is_rate_limit_error(exception: Exception) -> bool:
         return True
     return False
 
-class LLMBasedTableDetector(TableInterface):
+class LLMBasedTableDetector(TableDetectionInterface): # Updated inheritance
     """
-    An implementation of TableInterface that uses a Large Language Model (LLM)
+    An implementation of TableDetectionInterface that uses a Large Language Model (LLM)
     to detect tables in images.
     Assumes an OpenAI-compatible client for chat completions with image input.
     """
@@ -253,53 +254,60 @@ class LLMBasedTableDetector(TableInterface):
                         f"LLM table detection: Exhausted {self.max_response_validation_attempts} attempts. "
                         f"Last response type was '{response_type}', raw: '{llm_response_content}'"
                     )
-                    return False
+                    return False # Default to False if all validation attempts fail
 
             except Exception as e:
-                # This catches errors from llm_executor_func or parsing.
-                # API specific errors (like rate limits) should ideally be handled by tenacity on the caller of this function.
-                # If an error occurs here that tenacity on the caller *doesn't* catch and retry, it will propagate.
                 logger.error(
-                    f"Exception during LLM detection attempt {attempt + 1}/{self.max_response_validation_attempts}: {e}",
+                    f"Exception during sync LLM detection attempt {attempt + 1}/{self.max_response_validation_attempts}: {e}",
                     exc_info=True
                 )
-                # If it's the last attempt, or a non-retriable error by the outer tenacity, let it propagate
-                # or decide to return False. For now, let it propagate if not handled by outer tenacity.
-                # However, the prompt asks for this function NOT to handle API level retries.
-                # So, if an exception reaches here, it means it's either a non-API error from the executor,
-                # or an API error that the outer tenacity has given up on.
-                # We should re-raise to ensure the outer tenacity (if any) or caller sees it.
-                # Or, more simply, this loop is for *validation*. If the API call itself fails hard, it should raise.
-                raise TableDetectionError(f"LLM API call failed during validation loop: {str(e)}") from e
-
-
-        logger.error(f"LLM table detection failed after all {self.max_response_validation_attempts} validation attempts.")
+                # Similar to async, re-raise to let outer tenacity handle API errors if it's configured for this sync path.
+                # Or if it's a fundamental error in the sync call itself.
+                raise TableDetectionError(f"Sync LLM API call failed during validation loop: {str(e)}") from e
+        
+        logger.error(f"Sync LLM table detection failed after all {self.max_response_validation_attempts} validation attempts.")
         return False
 
-    
     async def adetect_tables_on_page(self, image: Image.Image) -> bool:
         """
-        Asynchronously detects if the given image (rendered from a PDF page) contains a table.
+        Asynchronously detects if the given image contains a table using LLM.
+        Handles API-level retries (e.g., rate limits) using tenacity.
+        Also includes an internal loop for validating the "yes"/"no" response format.
         """
+        if not isinstance(image, Image.Image):
+            raise TableDetectionError("Invalid input: image must be a PIL.Image.Image object.")
         try:
-            image_data_url = self._pil_to_base64_data_uri(image, format="PNG")
+            image_data_url = self._pil_to_base64_data_uri(image)
+            return await self._perform_async_llm_detection_with_validation_loop(
+                initial_prompt_text=self.table_detection_prompt,
+                image_data_url=image_data_url
+            )
         except Exception as e:
-            logger.error(f"Failed to convert image to base64 for table detection: {e}", exc_info=True)
-            raise TableDetectionError(f"Image conversion failed for adetect: {str(e)}") from e
-        return await self._perform_async_llm_detection_with_validation_loop(
-            self.table_detection_prompt,
-            image_data_url,
-        )
+            if isinstance(e, TableDetectionError): # Re-raise if it's already our specific error
+                raise
+            logger.error(f"Async LLM Table detection failed: {e}", exc_info=True)
+            # Wrap other exceptions in TableDetectionError
+            raise TableDetectionError(f"Async LLM table detection failed: {str(e)}") from e
 
     def detect_tables_on_page(self, image: Image.Image) -> bool:
         """
-        Synchronously detects if the given image (rendered from a PDF page) contains a table.
+        Synchronously detects if the given image contains a table using LLM.
+        Handles API-level retries (e.g., rate limits) using tenacity.
+        Also includes an internal loop for validating the "yes"/"no" response format.
         """
-        base_image_data_url = self._pil_to_base64_data_uri(image, format="PNG")
-        return self._perform_sync_llm_detection_with_validation_loop(
-            self.table_detection_prompt,
-            base_image_data_url,
-        )
+        if not isinstance(image, Image.Image):
+            raise TableDetectionError("Invalid input: image must be a PIL.Image.Image object.")
+        try:
+            image_data_url = self._pil_to_base64_data_uri(image)
+            return self._perform_sync_llm_detection_with_validation_loop(
+                initial_prompt_text=self.table_detection_prompt, 
+                image_data_url=image_data_url
+            )
+        except Exception as e:
+            if isinstance(e, TableDetectionError): # Re-raise if it's already our specific error
+                raise
+            logger.error(f"Sync LLM Table detection failed: {e}", exc_info=True)
+            raise TableDetectionError(f"Sync LLM table detection failed: {str(e)}") from e
 
     def __str__(self):
         return f"LLMBasedTableDetector (model={self.llm_model})" 

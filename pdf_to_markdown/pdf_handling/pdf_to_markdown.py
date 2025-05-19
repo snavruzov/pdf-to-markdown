@@ -16,7 +16,7 @@ from tqdm import tqdm
 # Local imports
 from pdf_to_markdown.ocr_services.ocr_service_interface import OCRInterface, OCRProcessingError
 from pdf_to_markdown.pdf_handling.ocr_needed import ocr_needed
-from pdf_to_markdown.table_services.table_service_interface import TableInterface, TableDetectionError
+from pdf_to_markdown.table_detection_services.table_detection_service_interface import TableDetectionInterface, TableDetectionError
 from pdf_to_markdown.pdf_handling.page_renderer import render_page_to_pil_image
 
 pymupdf4llm_img_ref_pattern = re.compile(r"!\[\]\((.*)\)")
@@ -183,7 +183,7 @@ async def process_readable_pages(
 async def pdf_to_markdown(
     pdf_source: Union[str, pathlib.Path, bytes, io.BytesIO, pymupdf.Document],
     image_ocr_service: OCRInterface, 
-    table_service: Optional[TableInterface] = None,
+    table_detection_service: Optional[TableDetectionInterface] = None,
     pages: Optional[List[int]] = None,
     force_ocr: bool = False,
     show_progress: bool = False) -> dict[int, str]:
@@ -194,7 +194,7 @@ async def pdf_to_markdown(
         pdf_source: PDF source, can be a file path (str or pathlib.Path),
                     bytes, an io.BytesIO stream, or a pymupdf.Document object.
         image_ocr_service: Service to use for OCR on images.
-        table_service: Service to use for table detection
+        table_detection_service: Service to use for table detection
         pages: List of page indices to process, or None for all pages.
         force_ocr: Whether to force OCR on all pages.
         show_progress: Whether to show progress bars.
@@ -236,7 +236,7 @@ async def pdf_to_markdown(
         if not force_ocr:
             page_iterator = tqdm(page_numbers, desc="Analyzing pages for initial OCR needs") if show_progress else page_numbers
             for page_nr in page_iterator:
-                if ocr_needed(doc_to_process[page_nr], table_service=table_service):
+                if ocr_needed(doc_to_process[page_nr], table_detection_service=table_detection_service):
                     pages_needing_ocr.append(page_nr)
                 else:
                     readable_pages.append(page_nr)
@@ -287,53 +287,70 @@ async def pdf_to_markdown(
 def pdf_to_markdown_sync(
     pdf_source: Union[str, pathlib.Path, bytes, io.BytesIO, pymupdf.Document],
     image_ocr_service: OCRInterface, 
-    table_service: Optional[TableInterface] = None,
+    table_detection_service: Optional[TableDetectionInterface] = None,
     pages: Optional[List[int]] = None,
     force_ocr: bool = False,
     show_progress: bool = False) -> dict[int, str]:
     """
-    Synchronous wrapper for the pdf_to_markdown function.
-    Converts a PDF file to markdown text.
-    
+    Synchronously convert a PDF file to markdown text.
+    This is a wrapper around `pdf_to_markdown`.
+
     Args:
-        pdf_source: PDF source, can be a file path (str or pathlib.Path),
-                    bytes, an io.BytesIO stream, or a pymupdf.Document object.
-        image_ocr_service: Service to use for OCR on images.
-        table_service: Service to use for table detection
-        pages: List of page indices to process, or None for all pages.
+        pdf_source: PDF source (file path, bytes, stream, or pymupdf.Document).
+        image_ocr_service: Service for OCR on images.
+        table_detection_service: Service for table detection.
+        pages: Optional list of page indices to process.
         force_ocr: Whether to force OCR on all pages.
         show_progress: Whether to show progress bars.
-        
-    Returns:
-        A dictionary mapping page numbers to their markdown content.
-    """
-    # Ensure nest_asyncio is applied if an event loop is already running,
-    # which can happen in environments like Jupyter notebooks.
-    # Users might need to install it: pip install nest_asyncio
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            # If a loop is running, asyncio.run() cannot be called directly.
-            # nest_asyncio allows reentrant usage of asyncio.run().
-            # We attempt to import and apply it. If not available, users might face issues.
-            try:
-                import nest_asyncio
-                nest_asyncio.apply()
-                logger.info("nest_asyncio applied for synchronous call within a running event loop.")
-            except ImportError:
-                logger.warning(
-                    "Running in an active event loop. Consider installing 'nest_asyncio' "
-                    "or use the asynchronous 'pdf_to_markdown' function directly."
-                )
-    except RuntimeError:
-        # No event loop is currently set, asyncio.run() will create a new one.
-        pass
 
-    return asyncio.run(pdf_to_markdown(
-        pdf_source=pdf_source,
-        image_ocr_service=image_ocr_service,
-        table_service=table_service,
-        pages=pages,
-        force_ocr=force_ocr,
-        show_progress=show_progress
-    ))
+    Returns:
+        A dictionary mapping page numbers to markdown content.
+    """
+    # Ensure nest_asyncio is applied if we are in a context (like Jupyter) where an event loop might already be running.
+    # This is a common pattern for libraries that want to offer a sync API by running an async backend.
+    try:
+        import nest_asyncio
+        nest_asyncio.apply()
+        logger.debug("nest_asyncio applied for pdf_to_markdown_sync.")
+    except ImportError:
+        logger.debug("nest_asyncio not found, proceeding without it. This might cause issues in certain environments like Jupyter notebooks if an event loop is already running.")
+    except RuntimeError as e: # a RuntimeError may be raised if an event loop is already running and nest_asyncio is not installed or cannot apply
+        logger.warning(f"Could not apply nest_asyncio in pdf_to_markdown_sync: {e}. This might cause issues in some environments.")
+
+    # Helper to run the async function in a new event loop or existing one if patched by nest_asyncio
+    def run_async_in_sync_context():
+        return asyncio.run(pdf_to_markdown(
+            pdf_source=pdf_source,
+            image_ocr_service=image_ocr_service,
+            table_detection_service=table_detection_service,
+            pages=pages,
+            force_ocr=force_ocr,
+            show_progress=show_progress
+        ))
+    
+    # Attempt to run, handling potential event loop issues
+    try:
+        return run_async_in_sync_context()
+    except RuntimeError as e:
+        if "cannot be called from a running event loop" in str(e) or \
+           "Event loop is closed" in str(e) or \
+           "There is no current event loop in thread" in str(e): # Also handle case where no loop exists
+            
+            logger.warning(f"RuntimeError with event loop in pdf_to_markdown_sync: {e}. Attempting to manage loop explicitly.")
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                result = loop.run_until_complete(pdf_to_markdown(
+                    pdf_source=pdf_source,
+                    image_ocr_service=image_ocr_service,
+                    table_detection_service=table_detection_service,
+                    pages=pages,
+                    force_ocr=force_ocr,
+                    show_progress=show_progress
+                ))
+                return result
+            finally:
+                loop.close()
+                asyncio.set_event_loop(None) # Clean up the event loop from the current thread
+        else:
+            raise # Re-raise other runtime errors
