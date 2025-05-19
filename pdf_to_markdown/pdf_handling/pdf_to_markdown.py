@@ -113,7 +113,8 @@ async def process_readable_pages(
     doc: pymupdf.Document,
     image_ocr_service: OCRInterface, 
     pages: List[int],
-    show_progress: bool = False) -> Dict[int, str]:
+    show_progress: bool = False,
+    table_strategy: Optional[str] = None) -> Dict[int, str]:
     """
     Process readable pages and return the results.
     """
@@ -129,7 +130,7 @@ async def process_readable_pages(
             image_format="jpg",
             show_progress=show_progress,
             embed_images=False, # images are stored as references in the markdown
-            table_strategy=None, # "lines_strict", # Other options are: lines, lines_strict and text -> handled by OCR
+            table_strategy=table_strategy, # "lines_strict", # Other options are: lines, lines_strict and text -> handled by OCR
             image_size_limit=0.02, # default = 0.05
             dpi=300, # high resolution for better OCR
         )
@@ -264,7 +265,8 @@ async def pdf_to_markdown(
             tasks.append(ocr_future)
 
         if readable_pages:
-            tasks.append(process_readable_pages(doc_to_process, image_ocr_service, readable_pages, show_progress))
+            table_strategy = "lines_strict" if table_detection_service is None else None
+            tasks.append(process_readable_pages(doc_to_process, image_ocr_service, readable_pages, show_progress, table_strategy))
         else:
             readable_future = asyncio.Future()
             readable_future.set_result({})

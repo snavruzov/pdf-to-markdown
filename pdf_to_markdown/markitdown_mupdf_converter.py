@@ -61,6 +61,7 @@ def register_converters(markitdown: MarkItDown, **kwargs_from_markitdown_init):
     table_detection_service_instance = kwargs_from_markitdown_init.get("table_detection_service")
     llm_client = kwargs_from_markitdown_init.get("llm_client")
     llm_model = kwargs_from_markitdown_init.get("llm_model")
+    show_progress = kwargs_from_markitdown_init.get("show_progress", False)
     # docintel_endpoint = kwargs_from_markitdown_init.get("docintel_endpoint") # Assuming not used for table service for now
     # docintel_credential = kwargs_from_markitdown_init.get("docintel_credential") # Assuming not used for table service for now
 
@@ -69,6 +70,7 @@ def register_converters(markitdown: MarkItDown, **kwargs_from_markitdown_init):
         table_detection_service=table_detection_service_instance,
         llm_client=llm_client,
         llm_model=llm_model,
+        show_progress=show_progress,
         # docintel_endpoint=docintel_endpoint, # Not passing to converter for table service yet
         # docintel_credential=docintel_credential # Not passing to converter for table service yet
     )
@@ -86,22 +88,26 @@ class MuPdfMarkitdownConverter(DocumentConverter):
         table_detection_service: Optional[TableDetectionInterface] = None,
         llm_client: Optional[Any] = None,
         llm_model: Optional[str] = None,
+        show_progress: bool = False,
         **other_config # For future expansion or other direct configs
     ):
         super().__init__()
         self.ocr_service: Optional[OCRInterface] = None
         self.table_detection_service: Optional[TableDetectionInterface] = None
+        self.show_progress: bool = show_progress
 
         self._initialize_ocr_service(
             direct_ocr_service=ocr_service,
             llm_client=llm_client,
             llm_model=llm_model,
+            show_progress=show_progress,
             **other_config
         )
         self._initialize_table_detection_service(
             direct_table_detection_service=table_detection_service,
             llm_client=llm_client,
             llm_model=llm_model,
+            show_progress=show_progress,
             **other_config
         )
 
@@ -111,9 +117,26 @@ class MuPdfMarkitdownConverter(DocumentConverter):
                 "PDF text extraction will be severely limited or fail. "
             )
         if not self.table_detection_service:
-             logger.info(
+            logger.info(
                 "MuPdfMarkitdownConverter: Table Detection Service was not initialized (e.g. no LLM client/model for default). "
                 "Table detection beyond basic text will not be enhanced by a dedicated service."
+            )
+    
+    def dependency_check(self) -> None:
+        """
+        Check if all dependencies are satisfied.
+        """
+        if _dependency_exc_info_pymupdf is not None:
+            raise MissingDependencyException(
+                f"Missing dependency for {type(self).__name__} (.pdf via custom plugin): pymupdf for custom PDF processing is required."
+            ) from _dependency_exc_info_pymupdf[1].with_traceback( # type: ignore[union-attr]
+                _dependency_exc_info_pymupdf[2]
+            )
+        if _dependency_exc_info_pymupdf4llm is not None:
+            raise MissingDependencyException(
+                f"Missing dependency for {type(self).__name__} (.pdf via custom plugin): pymupdf4llm for custom PDF to Markdown conversion is required."
+            ) from _dependency_exc_info_pymupdf4llm[1].with_traceback( # type: ignore[union-attr]
+                _dependency_exc_info_pymupdf4llm[2]
             )
 
     def _initialize_ocr_service(
@@ -121,6 +144,7 @@ class MuPdfMarkitdownConverter(DocumentConverter):
         direct_ocr_service: Optional[OCRInterface] = None,
         llm_client: Optional[Any] = None,
         llm_model: Optional[str] = None,
+        show_progress: bool = False,
         **other_config
     ):
         if direct_ocr_service is not None and isinstance(direct_ocr_service, OCRInterface):
@@ -130,7 +154,6 @@ class MuPdfMarkitdownConverter(DocumentConverter):
         
         if llm_client and llm_model:
             try:
-                show_progress = other_config.get('show_progress', False) # Use .get for safer access
                 ocr_prompt = other_config.get('ocr_prompt') # Allow specific OCR prompt override
                 
                 ocr_service_kwargs = {k: v for k, v in other_config.items() if k not in ['show_progress', 'ocr_prompt']}
@@ -213,20 +236,6 @@ class MuPdfMarkitdownConverter(DocumentConverter):
         Converts a PDF file stream to Markdown.
         MarkItDown calls this method with a file-like object (stream).
         """
-        # --- Dependency Check --- 
-        if _dependency_exc_info_pymupdf is not None:
-            raise MissingDependencyException(
-                f"Missing dependency for {type(self).__name__} (.pdf via custom plugin): pymupdf for custom PDF processing is required."
-            ) from _dependency_exc_info_pymupdf[1].with_traceback( # type: ignore[union-attr]
-                _dependency_exc_info_pymupdf[2]
-            )
-        if _dependency_exc_info_pymupdf4llm is not None:
-            raise MissingDependencyException(
-                f"Missing dependency for {type(self).__name__} (.pdf via custom plugin): pymupdf4llm for custom PDF to Markdown conversion is required."
-            ) from _dependency_exc_info_pymupdf4llm[1].with_traceback( # type: ignore[union-attr]
-                _dependency_exc_info_pymupdf4llm[2]
-            )
-        # --- End Dependency Check ---
 
         if not self.ocr_service:
             logger.error(
@@ -246,7 +255,7 @@ class MuPdfMarkitdownConverter(DocumentConverter):
         doc_for_title: Optional[pymupdf.Document] = None
         try:
             if 'pymupdf' not in sys.modules:
-                 raise ImportError("PyMuPDF was not properly imported despite passing initial check for title extraction.")
+                raise ImportError("PyMuPDF was not properly imported despite passing initial check for title extraction.")
             doc_for_title = pymupdf.open(stream=io.BytesIO(pdf_bytes), filetype="pdf") # type: ignore
             title_from_pdf = doc_for_title.metadata.get('title')
         except Exception as e:
@@ -260,7 +269,7 @@ class MuPdfMarkitdownConverter(DocumentConverter):
             # They could contain per-conversion overrides if needed.
             pages_to_process: Optional[List[int]] = kwargs.get("pages")
             force_ocr_flag: bool = kwargs.get("force_ocr", False)
-            show_progress_flag: bool = kwargs.get("show_progress", False)
+            show_progress_flag: bool = kwargs.get("show_progress", self.show_progress)
             
             self.ocr_service.show_progress = show_progress_flag
             
@@ -275,7 +284,7 @@ class MuPdfMarkitdownConverter(DocumentConverter):
                 )
             )
             
-             # Add page number as a heading for each page
+            # Add page number as a heading for each page
             sorted_page_numbers = sorted(raw_results_dict.keys())
             combined_md_parts = [
                 f"# Page {pn+1}\n\n{raw_results_dict[pn]}" for pn in sorted_page_numbers
