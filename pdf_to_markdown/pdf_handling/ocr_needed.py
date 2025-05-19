@@ -1,10 +1,8 @@
 import pymupdf
 import math
-import io
 import logging
 from typing import Optional
 
-from PIL import Image
 from pdf_to_markdown.table_detection_services.table_detection_service_interface import TableDetectionInterface, TableDetectionError
 from pdf_to_markdown.pdf_handling.page_renderer import render_page_to_pil_image
 

@@ -94,21 +94,76 @@ class LLMBasedTableDetector(TableDetectionInterface): # Updated inheritance
 
     async def _execute_llm_call_async(self, messages: list) -> Any:
         """Executes the LLM call asynchronously using a direct await."""
-        return await self.llm_client.chat.completions.create(
-            model=self.llm_model,
-            messages=messages,
-            temperature=0.0,
-            max_tokens=3
-        )
+        if self._create_is_async:
+            return await self.llm_client.chat.completions.create(
+                model=self.llm_model,
+                messages=messages,
+                temperature=0.0,
+                max_tokens=3
+            )
+        else: # Synchronous client
+            return await asyncio.to_thread(
+                self.llm_client.chat.completions.create,
+                model=self.llm_model,
+                messages=messages,
+                temperature=0.0,
+                max_tokens=3
+            )
 
     def _execute_llm_call_sync(self, messages: list) -> Any:
-        """Executes the LLM call synchronously in a separate thread."""
-        return self.llm_client.chat.completions.create(
-            model=self.llm_model,
-            messages=messages,
-            temperature=0.0,
-            max_tokens=3
-        )
+        """
+        Synchronously executes the LLM chat completion call.
+        Handles both synchronous and asynchronous LLM clients.
+        If the client is asynchronous, its 'create' coroutine is run to completion.
+        """
+        llm_create_func = self.llm_client.chat.completions.create
+        kwargs = {
+            "model": self.llm_model,
+            "messages": messages,
+            "temperature": 0.0,
+            "max_tokens": 3  # Assuming small response for "yes"/"no"
+        }
+
+        if self._create_is_async:
+            # Asynchronous client: need to run its coroutine to completion.
+            coro = llm_create_func(**kwargs)
+            try:
+                # Try to use an existing event loop if available and running.
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    logger.debug(
+                        "LLMTableDetector._execute_llm_call_sync: Async client in sync context, "
+                        "loop running. Using loop.run_until_complete."
+                    )
+                    return loop.run_until_complete(coro)
+                else:
+                    # Loop exists but is not running, or we want asyncio.run's management.
+                    logger.debug(
+                        "LLMTableDetector._execute_llm_call_sync: Async client in sync context, "
+                        "loop not running. Using asyncio.run."
+                    )
+                    return asyncio.run(coro)
+            except RuntimeError as e:
+                # Handles cases like:
+                # - "asyncio.run() cannot be called from a running event loop" (if nest_asyncio not effective)
+                # - "There is no current event loop in thread"
+                # - Event loop is closed.
+                logger.warning(
+                    f"LLMTableDetector._execute_llm_call_sync: RuntimeError ('{e}') with event loop. "
+                    "Attempting to run async client call in a new dedicated event loop."
+                )
+                new_loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(new_loop)
+                try:
+                    return new_loop.run_until_complete(coro)
+                finally:
+                    new_loop.close()
+                    asyncio.set_event_loop(None)  # Clean up to avoid interference
+        else:
+            # Synchronous client: direct call.
+            logger.debug("LLMTableDetector._execute_llm_call_sync: Sync client in sync context. Direct call.")
+            return llm_create_func(**kwargs)
+
     @retry( # This retry is for API errors (e.g. rate limits) for the ASYNC flow
         wait=wait_exponential(multiplier=1, min=2, max=30) + wait_random(0, 2),
         stop=stop_after_delay(180),
