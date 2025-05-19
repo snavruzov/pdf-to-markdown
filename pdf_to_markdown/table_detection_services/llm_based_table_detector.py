@@ -49,6 +49,21 @@ class LLMBasedTableDetector(TableDetectionInterface):
         self._create_is_async = asyncio.iscoroutinefunction(llm_client.chat.completions.create)
         self.llm_client = llm_client
         self.llm_model = llm_model
+
+        # Special handling for openai.AsyncOpenAI client if iscoroutinefunction might be misled.
+        if hasattr(llm_client, '__class__') and llm_client.__class__.__name__ == 'AsyncOpenAI':
+            if not self._create_is_async:
+                logger.warning(
+                    "LLMTableDetector client identified as AsyncOpenAI, but its chat.completions.create method "
+                    "was not initially detected as a coroutine function. "
+                    "Forcing _create_is_async to True for AsyncOpenAI to ensure direct awaiting."
+                )
+                self._create_is_async = True
+            else:
+                logger.debug(
+                    "LLMTableDetector: AsyncOpenAI client detected, and its create method correctly identified as async."
+                )
+
         self.table_detection_prompt = kwargs.get("table_detection_prompt", DEFAULT_TABLE_DETECTION_PROMPT)
         self.max_response_validation_attempts = kwargs.get("max_response_validation_attempts", MAX_RESPONSE_VALIDATION_ATTEMPTS)
 

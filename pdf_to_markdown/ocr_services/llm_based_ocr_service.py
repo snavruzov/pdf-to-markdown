@@ -76,11 +76,29 @@ class LLMBasedOCRService(OCRInterface):
                 "It must have a `chat.completions.create` method."
             )
 
-        self._create_is_async = asyncio.iscoroutinefunction(llm_client.chat.completions.create)
-        
-        self.show_progress = show_progress
         self.llm_client = llm_client
         self.llm_model = llm_model
+
+        # Determine if the client's create method is async
+        self._create_is_async = asyncio.iscoroutinefunction(llm_client.chat.completions.create)
+
+        # Special handling for openai.AsyncOpenAI client if iscoroutinefunction might be misled.
+        # The main symptom of misdetection (iscoroutinefunction returning False for an async method)
+        # would be "'coroutine' object has no attribute 'choices'" because asyncio.to_thread
+        # would be used on an async method, returning the coroutine object itself.
+        if hasattr(llm_client, '__class__') and llm_client.__class__.__name__ == 'AsyncOpenAI':
+            if not self._create_is_async:
+                logger.warning(
+                    "LLM client identified as AsyncOpenAI, but its chat.completions.create method "
+                    "was not initially detected as a coroutine function by asyncio.iscoroutinefunction. "
+                    "Forcing _create_is_async to True for AsyncOpenAI to ensure direct awaiting. "
+                    "If issues persist, the client's async method structure might have changed."
+                )
+                self._create_is_async = True
+            else:
+                logger.debug("AsyncOpenAI client detected, and its create method correctly identified as async.")
+
+        self.show_progress = show_progress
         # Default prompt focuses on text extraction, but can be overridden
         self.ocr_prompt = kwargs.get("ocr_prompt", DEFAULT_OCR_PROMPT)
         #self.max_tokens = kwargs.get("max_tokens", 2000) # Max tokens for the LLM response
