@@ -3,6 +3,7 @@ from typing import List, Any, Optional
 import asyncio
 import base64
 import io
+import re # Import re module
 from tenacity import retry, stop_after_delay, wait_exponential, retry_if_exception, wait_random
 
 from PIL import Image # Pillow's Image
@@ -112,6 +113,32 @@ class LLMBasedOCRService(OCRInterface):
         img_base64 = base64.b64encode(img_bytes).decode('utf-8')
         return f"data:image/{format.lower()};base64,{img_base64}"
 
+    def _clean_llm_response(self, text: str) -> str:
+        """Cleans common markdown code fences from LLM responses."""
+        if not text: # Handle empty or None input gracefully
+            return ""
+        
+        # Pattern to match leading ``` optionally followed by a language specifier and a newline,
+        # and trailing ```. Case-insensitive and multiline.
+        # It handles cases like: ```markdown\nTEXT\n``` or ```\nTEXT\n``` or ```python\nTEXT\n```
+        # It also handles if the LLM just puts ```TEXT``` on one line (though less common for blocks)
+        
+        # Remove leading fence with optional language and newline
+        cleaned_text = re.sub(r"^\s*```(?:[a-zA-Z0-9_\-]+)?\s*\n?", "", text, flags=re.IGNORECASE)
+        # Remove trailing fence
+        cleaned_text = re.sub(r"\n?\s*```\s*$", "", cleaned_text, flags=re.IGNORECASE)
+        
+        # Fallback for single-line fences like ```text``` if the above didn't catch it fully
+        # This is more aggressive if the text *is* just a language specifier, but unlikely for OCR content.
+        if cleaned_text.startswith("```") and cleaned_text.endswith("```") and "\n" not in cleaned_text[3:-3]:
+             # Check if what's inside looks like a language specifier or is very short (likely not the actual content)
+            content_inside = cleaned_text[3:-3].strip()
+            if not (len(content_inside) < 15 and content_inside.isalnum() and not content_inside.isspace()):
+                 # If it's not a short alphanumeric string (likely a language specifier), then strip the fences
+                 cleaned_text = content_inside
+
+        return cleaned_text.strip() # Final strip for any residual whitespace
+
     @retry(
         wait=wait_exponential(multiplier=1, min=2, max=30) + wait_random(0, 3), # Add up to 3s random jitter
         stop=stop_after_delay(600), # Stop retrying after 10 minutes
@@ -156,7 +183,9 @@ class LLMBasedOCRService(OCRInterface):
                 )
 
             if response.choices and response.choices[0].message and response.choices[0].message.content:
-                return response.choices[0].message.content.strip()
+                raw_content = response.choices[0].message.content
+                cleaned_content = self._clean_llm_response(raw_content)
+                return cleaned_content
             else:
                 logger.warning("LLM response was empty or not in expected format.")
                 raise OCRProcessingError("LLM OCR: No content in response. The image may not contain text or the model could not process it.")
