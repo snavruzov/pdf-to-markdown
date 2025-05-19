@@ -1,7 +1,15 @@
 import pymupdf
 import math
+import io
+import logging
+from typing import Optional
+
+from PIL import Image
+from pdf_to_markdown.table_services.table_service_interface import TableInterface, TableDetectionError
+from pdf_to_markdown.pdf_handling.page_renderer import render_page_to_pil_image
 
 pymupdf.TOOLS.mupdf_display_warnings(False)
+logger = logging.getLogger(__name__)
 
 
 # ----- heuristic functions -----
@@ -103,34 +111,77 @@ def is_page_covered_by_image(page: pymupdf.Page) -> bool:
     return (image_area / page_area) >= 0.95
 
 
-# ----- ocr needed -----
-def ocr_needed(page: pymupdf.Page) -> bool:
+# ----- Helper for table detection -----
+def _check_for_tables_with_service(page: pymupdf.Page, table_service: TableInterface) -> bool:
     """
-    Determines if OCR is needed for a given page based on a set of criteria.
+    Renders a page and uses the provided table_service to detect tables.
+    Returns True if tables are detected, False otherwise or on error.
+    """
+    logger.debug(f"Page {page.number}: Checking for tables with TableService.")
+    pil_image_for_table_detection = None
+    DEFAULT_DPI_FOR_TABLE_DETECTION = 150 # Default if service gives no specific config
+    try:
+        render_config = table_service.get_best_size()
+        pil_image_for_table_detection = render_page_to_pil_image(
+            page=page, 
+            render_config=render_config, 
+            default_dpi=DEFAULT_DPI_FOR_TABLE_DETECTION, 
+            purpose="table detection"
+        )
+        
+        if table_service.detect_tables_on_page(pil_image_for_table_detection):
+            logger.info(f"Page {page.number}: Tables DETECTED by TableService.")
+            return True
+        else:
+            logger.debug(f"Page {page.number}: No tables detected by TableService.")
+            return False
+    except TableDetectionError as e:
+        logger.error(f"Page {page.number}: TableService detection failed: {e}. Assuming no tables for this check.", exc_info=True)
+    except Exception as e:
+        logger.error(f"Page {page.number}: Unexpected error during TableService image rendering or detection: {e}. Assuming no tables.", exc_info=True)
+    finally:
+        if pil_image_for_table_detection:
+            try:
+                pil_image_for_table_detection.close()
+            except Exception as e:
+                logger.error(f"Page {page.number}: Error closing temporary PIL image for table detection: {e}", exc_info=True)
+    return False # Default to False in case of any error or if no tables found
+
+
+# ----- ocr needed -----
+def ocr_needed(page: pymupdf.Page, table_service: Optional[TableInterface] = None) -> bool:
+    """
+    Determines if OCR is needed for a given page based on a set of criteria,
+    including an optional table detection service.
     """
     if has_no_text(page):
-        # If there's no text, OCR is likely needed,
-        # but check if it's because it's covered by an image.
-        if is_page_covered_by_image(page):
-            return True
-        # If not covered by an image and no text, could be a blank page or scanned
-        # Further checks could be added here if needed, e.g. for blank pages.
-        # For now, assume OCR is beneficial if no text is found.
+        # if is_page_covered_by_image(page):
+        #     logger.debug(f"Page {page.number}: OCR needed (no text, covered by image).")
+        #     return True
+        logger.debug(f"Page {page.number}: OCR needed (no text, not primarily image).")
         return True
     
     if has_weird_whitespace_ratio(page):
-        # if there is more whitespace than text, it's probably a scanned page
+        logger.debug(f"Page {page.number}: OCR needed (weird whitespace ratio).")
         return True
     
     if has_many_small_vector_graphics(page):
+        logger.debug(f"Page {page.number}: OCR needed (many small vector graphics).")
         return True
     
-    # Even if there is some text, it might be very sparse and the page
-    # is mostly an image.
     if is_page_covered_by_image(page):
-        # If the page is mostly an image, but some text was found,
-        # it's a judgement call.
-        # To prioritize OCR on image-heavy pages with little text, this is set to True.
-        return True # Let other checks decide
+        # This check is important. If it's mostly an image, even if some text exists,
+        # OCR might be better to capture everything, including text within the image.
+        logger.debug(f"Page {page.number}: OCR needed (covered by image, implies text might be part of image).")
+        return True
 
+    # If none of the above heuristics triggered, and a table_service is provided, delegate to it.
+    if table_service:
+        logger.debug(f"Page {page.number}: Standard heuristics passed. Delegating to TableService for table check.")
+        if _check_for_tables_with_service(page, table_service):
+            # The helper function already logs its findings (detection or errors)
+            # ocr_needed just uses the boolean result here.
+            return True # OCR is needed if tables are found by the service
+
+    logger.debug(f"Page {page.number}: OCR not needed by any heuristic or TableService (if active).")
     return False

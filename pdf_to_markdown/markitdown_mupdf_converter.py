@@ -19,8 +19,9 @@ import pymupdf
 
 from pdf_to_markdown.pdf_handling.pdf_to_markdown import pdf_to_markdown
 from pdf_to_markdown.ocr_services.ocr_service_interface import OCRInterface
-
 from pdf_to_markdown.ocr_services.llm_based_ocr_service import LLMBasedOCRService
+from pdf_to_markdown.table_services.table_service_interface import TableInterface
+from pdf_to_markdown.table_services.llm_based_table_detector import LLMBasedTableDetector
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,7 @@ except ImportError:
 # Define accepted MIME types and extensions for PDFs
 ACCEPTED_MIME_TYPES = [
     "application/pdf",
+    "application/x-pdf",
 ]
 ACCEPTED_FILE_EXTENSIONS = [".pdf"]
 
@@ -55,40 +57,49 @@ def register_converters(markitdown: MarkItDown, **kwargs_from_markitdown_init):
     kwargs_from_markitdown_init contains arguments passed to MarkItDown's constructor.
     """
     # Extract potential OCR configurations from kwargs
-    # These keys are based on what MarkItDown seems to use internally or pass around
-    ocr_service_instance = kwargs_from_markitdown_init.get("custom_pdf_ocr_service") # Explicit override
+    ocr_service_instance = kwargs_from_markitdown_init.get("custom_pdf_ocr_service") # Explicit override for OCR
+    table_service_instance = kwargs_from_markitdown_init.get("custom_pdf_table_service") # Explicit override for Table
     llm_client = kwargs_from_markitdown_init.get("llm_client")
     llm_model = kwargs_from_markitdown_init.get("llm_model")
-    docintel_endpoint = kwargs_from_markitdown_init.get("docintel_endpoint")
-    docintel_credential = kwargs_from_markitdown_init.get("docintel_credential")
+    # docintel_endpoint = kwargs_from_markitdown_init.get("docintel_endpoint") # Assuming not used for table service for now
+    # docintel_credential = kwargs_from_markitdown_init.get("docintel_credential") # Assuming not used for table service for now
 
     converter = MuPdfMarkitdownConverter(
         ocr_service=ocr_service_instance,
+        table_service=table_service_instance,
         llm_client=llm_client,
         llm_model=llm_model,
-        docintel_endpoint=docintel_endpoint,
-        docintel_credential=docintel_credential
-        # Pass any other relevant kwargs if your converter's __init__ needs them
+        # docintel_endpoint=docintel_endpoint, # Not passing to converter for table service yet
+        # docintel_credential=docintel_credential # Not passing to converter for table service yet
     )
     markitdown.register_converter(converter, priority=-1.0)  # Lower than built-in PDF converter
 
 class MuPdfMarkitdownConverter(DocumentConverter):
     """
     A custom MarkItDown converter for PDF files using the project's pdf_to_markdown logic.
-    Relies on pymupdf, pymupdf4llm, and a configured OCRInterface implementation.
+    Relies on pymupdf, pymupdf4llm, and configured OCRInterface and TableInterface implementations.
     """
 
     def __init__(
         self,
         ocr_service: Optional[OCRInterface] = None,
+        table_service: Optional[TableInterface] = None,
         llm_client: Optional[Any] = None,
         llm_model: Optional[str] = None,
         **other_config # For future expansion or other direct configs
     ):
         super().__init__()
         self.ocr_service: Optional[OCRInterface] = None
+        self.table_service: Optional[TableInterface] = None
+
         self._initialize_ocr_service(
             direct_ocr_service=ocr_service,
+            llm_client=llm_client,
+            llm_model=llm_model,
+            **other_config
+        )
+        self._initialize_table_service(
+            direct_table_service=table_service,
             llm_client=llm_client,
             llm_model=llm_model,
             **other_config
@@ -98,10 +109,12 @@ class MuPdfMarkitdownConverter(DocumentConverter):
             logger.error(
                 "MuPdfMarkitdownConverter: OCR Service COULD NOT BE INITIALIZED. "
                 "PDF text extraction will be severely limited or fail. "
-                "Provide 'custom_pdf_ocr_service', or 'llm_client'/'llm_model', or 'docintel_endpoint'."
             )
-            # Depending on strictness, you might raise an error here
-            # raise ValueError("OCR Service could not be initialized for CustomPdfMarkitdownConverter")
+        if not self.table_service:
+             logger.info(
+                "MuPdfMarkitdownConverter: Table Service was not initialized (e.g. no LLM client/model for default). "
+                "Table detection beyond basic text will not be enhanced by a dedicated service."
+            )
 
     def _initialize_ocr_service(
         self,
@@ -115,23 +128,59 @@ class MuPdfMarkitdownConverter(DocumentConverter):
             self.ocr_service = direct_ocr_service
             return
         
-        # Attempt to initialize based on general LLM client/model config
         if llm_client and llm_model:
             try:
-                # Extract show_progress from other_config or default to False
-                show_progress = other_config.pop('show_progress', False)
+                show_progress = other_config.get('show_progress', False) # Use .get for safer access
+                ocr_prompt = other_config.get('ocr_prompt') # Allow specific OCR prompt override
+                
+                ocr_service_kwargs = {k: v for k, v in other_config.items() if k not in ['show_progress', 'ocr_prompt', 'table_detection_prompt', 'max_response_validation_attempts']}
+                if ocr_prompt: ocr_service_kwargs['ocr_prompt'] = ocr_prompt
+
                 self.ocr_service = LLMBasedOCRService(
                     llm_client=llm_client,
                     llm_model=llm_model,
                     show_progress=show_progress,
-                    **other_config
+                    **ocr_service_kwargs
                 )
-                logger.info(f"Initialized OCR service using LLMBasedOCRService with model: {llm_model}, show_progress={show_progress}")
+                logger.info(f"Initialized OCR service using LLMBasedOCRService with model: {llm_model}.")
                 return
             except Exception as e:
-                logger.warning(f"Failed to initialize LLMBasedOCRService: {e}. OCR will not be available.")
+                logger.warning(f"Failed to initialize LLMBasedOCRService: {e}. OCR will not be available via LLM.")
         
-        logger.warning("No suitable configuration found to initialize an OCR service for CustomPdfMarkitdownConverter.")
+        logger.warning("No suitable configuration found to initialize an OCR service for MuPdfMarkitdownConverter.")
+
+    def _initialize_table_service(
+        self,
+        direct_table_service: Optional[TableInterface] = None,
+        llm_client: Optional[Any] = None,
+        llm_model: Optional[str] = None,
+        **other_config
+    ):
+        if direct_table_service is not None and isinstance(direct_table_service, TableInterface):
+            logger.info("Using directly provided Table service instance.")
+            self.table_service = direct_table_service
+            return
+
+        if llm_client and llm_model:
+            try:
+                # Extract specific config for LLMBasedTableDetector or pass all of other_config
+                # For example, if LLMBasedTableDetector takes a specific prompt or validation attempts
+                table_detector_kwargs = {k: v for k, v in other_config.items() if k not in ['show_progress', 'ocr_prompt']}
+                # Example: if LLMBasedTableDetector has specific init args like 'table_detection_prompt' or 'max_response_validation_attempts'
+                # table_detection_prompt = other_config.get('table_detection_prompt')
+                # if table_detection_prompt: table_detector_kwargs['table_detection_prompt'] = table_detection_prompt
+
+                self.table_service = LLMBasedTableDetector(
+                    llm_client=llm_client,
+                    llm_model=llm_model,
+                    **table_detector_kwargs # Pass relevant parts of other_config
+                )
+                logger.info(f"Initialized Table service using LLMBasedTableDetector with model: {llm_model}.")
+                return
+            except Exception as e:
+                logger.warning(f"Failed to initialize LLMBasedTableDetector: {e}. LLM-based table detection will not be available.", exc_info=True)
+
+        logger.info("No suitable configuration found to initialize an LLM-based Table service for MuPdfMarkitdownConverter.")
 
     def accepts(
         self,
@@ -219,6 +268,7 @@ class MuPdfMarkitdownConverter(DocumentConverter):
                 pdf_to_markdown(
                     pdf_source=pdf_bytes_io, 
                     image_ocr_service=self.ocr_service, # Use the initialized service
+                    table_service=self.table_service, # Pass the initialized table service
                     pages=pages_to_process,
                     force_ocr=force_ocr_flag,
                     show_progress=show_progress_flag,

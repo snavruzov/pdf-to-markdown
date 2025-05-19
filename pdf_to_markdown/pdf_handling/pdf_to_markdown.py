@@ -14,8 +14,10 @@ from PIL import Image
 from tqdm import tqdm
 
 # Local imports
-from pdf_to_markdown.ocr_services.ocr_service_interface import OCRInterface
+from pdf_to_markdown.ocr_services.ocr_service_interface import OCRInterface, OCRProcessingError
 from pdf_to_markdown.pdf_handling.ocr_needed import ocr_needed
+from pdf_to_markdown.table_services.table_service_interface import TableInterface, TableDetectionError
+from pdf_to_markdown.pdf_handling.page_renderer import render_page_to_pil_image
 
 pymupdf4llm_img_ref_pattern = re.compile(r"!\[\]\((.*)\)")
 
@@ -39,76 +41,70 @@ def create_pymupdf4llm_img_ref(img_path: str) -> str:
     return f'![]({img_path})'
 
 
-def _render_page_in_parser_scale(page: pymupdf.Page, image_parser: OCRInterface) -> pymupdf.Pixmap:
-    """
-    Render a PDF page at the optimal scale for the parser.
-    
-    Args:
-        page: PyMuPDF page object
-        image_parser: Document parser that provides size information
-        
-    Returns:
-        Rendered page as a PyMuPDF Pixmap
-    """
-    if image_parser.get_best_size():
-        w, h = image_parser.get_best_size()
-        rect = page.rect
-        current_w, current_h = rect.width, rect.height
-        
-        if current_h >= current_w:
-            zoom = h / current_h
-        else:
-            zoom = w / current_w
-
-        mat = pymupdf.Matrix(zoom, zoom)
-        pix = page.get_pixmap(matrix=mat)
-    else:
-        pix = page.get_pixmap(dpi=300, colorspace=pymupdf.csRGB) # high resolution for better OCR
-    return pix
-
-
 async def ocr_pages(
     doc: pymupdf.Document, 
     image_ocr_service: OCRInterface,
     show_progress: bool,
     pages: Optional[List[int]] = None) -> Dict[int, str]:
     """
-    Batch process PDF pages with OCR using the batch API or regular API
+    Batch process PDF pages with OCR.
     
     Args:
-        doc: The PyMuPDF Document object
-        image_ocr_service: OCR service to use
-        pages: List of page indices to process, or None for all pages
+        doc: The PyMuPDF Document object.
+        image_ocr_service: OCR service to use.
+        show_progress: Whether to show a progress bar.
+        pages: List of page indices to process, or None for all pages.
         
     Returns:
-        Dictionary mapping page numbers to extracted text
+        Dictionary mapping page numbers to extracted text.
     """
     results = {}
-    images = []
-    page_indices = []
+    pil_images_for_ocr: List[Image.Image] = []
+    page_indices: List[int] = []
     
     to_process = list(range(len(doc))) if pages is None else pages
         
-    logger.info(f"Preparing {len(to_process)} pages for OCR.")
+    logger.info(f"Preparing {len(to_process)} pages for OCR by rendering them.")
     
-    if show_progress:
-        iterator = tqdm(to_process, total=len(to_process), desc="Rendering pages")
-    else:
-        iterator = to_process
+    DEFAULT_DPI_FOR_OCR = 300 # Default if service gives no specific config
+
+    iterator = tqdm(to_process, total=len(to_process), desc="Rendering pages for OCR") if show_progress else to_process
         
     for page_num in iterator:
         page = doc[page_num]
-        rendered_page = _render_page_in_parser_scale(page, image_ocr_service)
-        
-        with Image.open(io.BytesIO(rendered_page.pil_tobytes(format="png"))) as pillow_image:
-            img_copy = pillow_image.copy() # is this necessary?
-            img_copy.show()
-            images.append(img_copy)
+        try:
+            render_config = image_ocr_service.get_best_size()
+            pil_image = render_page_to_pil_image(
+                page=page, 
+                render_config=render_config, 
+                default_dpi=DEFAULT_DPI_FOR_OCR, 
+                purpose="OCR"
+            )
+            # pil_image.show() # Uncomment for debugging to see the rendered image
+            pil_images_for_ocr.append(pil_image)
             page_indices.append(page_num)
+        except Exception as e:
+            logger.error(f"Error rendering page {page_num} for OCR: {e}. Skipping this page for OCR.", exc_info=True)
+            # Optionally, add a placeholder or specific error message for this page in results
+            # results[page_num] = f"Error rendering page: {e}"
+            continue # Skip to the next page
     
-    if images:
-        batch_results = await image_ocr_service.aocr_image(images)
-        results = {page_nr: batch_results[i] for i, page_nr in enumerate(page_indices)}
+    if pil_images_for_ocr:
+        try:
+            logger.info(f"Sending {len(pil_images_for_ocr)} rendered pages to OCR service.")
+            batch_results = await image_ocr_service.aocr_image(pil_images_for_ocr)
+            results.update({page_nr: batch_results[i] for i, page_nr in enumerate(page_indices) if i < len(batch_results)})
+        except OCRProcessingError as e:
+            logger.error(f"OCR processing failed for a batch of pages: {e}. These pages might be missing from results.", exc_info=True)
+        except Exception as e:
+            logger.error(f"Unexpected error during batch OCR call: {e}. These pages might be missing from results.", exc_info=True)
+        finally:
+            # Close PIL images after OCR processing to free resources
+            for img in pil_images_for_ocr:
+                try:
+                    img.close()
+                except Exception as e_close:
+                    logger.warning(f"Error closing PIL image after OCR: {e_close}", exc_info=True)
     
     return results
 
@@ -133,7 +129,7 @@ async def process_readable_pages(
             image_format="jpg",
             show_progress=show_progress,
             embed_images=False, # images are stored as references in the markdown
-            table_strategy="lines_strict", # Other options are: lines, lines_strict and text
+            table_strategy=None, # "lines_strict", # Other options are: lines, lines_strict and text -> handled by OCR
             image_size_limit=0.02, # default = 0.05
             dpi=300, # high resolution for better OCR
         )
@@ -187,6 +183,7 @@ async def process_readable_pages(
 async def pdf_to_markdown(
     pdf_source: Union[str, pathlib.Path, bytes, io.BytesIO, pymupdf.Document],
     image_ocr_service: OCRInterface, 
+    table_service: Optional[TableInterface] = None,
     pages: Optional[List[int]] = None,
     force_ocr: bool = False,
     show_progress: bool = False) -> dict[int, str]:
@@ -197,6 +194,7 @@ async def pdf_to_markdown(
         pdf_source: PDF source, can be a file path (str or pathlib.Path),
                     bytes, an io.BytesIO stream, or a pymupdf.Document object.
         image_ocr_service: Service to use for OCR on images.
+        table_service: Service to use for table detection
         pages: List of page indices to process, or None for all pages.
         force_ocr: Whether to force OCR on all pages.
         show_progress: Whether to show progress bars.
@@ -236,14 +234,19 @@ async def pdf_to_markdown(
         pages_needing_ocr = []
         readable_pages = []
         if not force_ocr:
-            for page_nr in page_numbers:
-                if ocr_needed(doc_to_process[page_nr]):
-                    logger.info(f"Page {page_nr} is not readable. OCR needed.")
+            page_iterator = tqdm(page_numbers, desc="Analyzing pages for initial OCR needs") if show_progress else page_numbers
+            for page_nr in page_iterator:
+                if ocr_needed(doc_to_process[page_nr], table_service=table_service):
                     pages_needing_ocr.append(page_nr)
                 else:
                     readable_pages.append(page_nr)
         else:
-            pages_needing_ocr = page_numbers
+            logger.info("Force OCR is enabled. All pages initially marked for OCR.")
+            pages_needing_ocr = list(page_numbers) # Ensure it's a copy if page_numbers is an iterator/range
+            readable_pages = []
+
+        # Log final classification counts
+        logger.info(f"Final page classification: {len(pages_needing_ocr)} pages for OCR, {len(readable_pages)} pages for direct Markdown conversion.")
             
         tasks = []
         if pages_needing_ocr:
@@ -284,6 +287,7 @@ async def pdf_to_markdown(
 def pdf_to_markdown_sync(
     pdf_source: Union[str, pathlib.Path, bytes, io.BytesIO, pymupdf.Document],
     image_ocr_service: OCRInterface, 
+    table_service: Optional[TableInterface] = None,
     pages: Optional[List[int]] = None,
     force_ocr: bool = False,
     show_progress: bool = False) -> dict[int, str]:
@@ -295,6 +299,7 @@ def pdf_to_markdown_sync(
         pdf_source: PDF source, can be a file path (str or pathlib.Path),
                     bytes, an io.BytesIO stream, or a pymupdf.Document object.
         image_ocr_service: Service to use for OCR on images.
+        table_service: Service to use for table detection
         pages: List of page indices to process, or None for all pages.
         force_ocr: Whether to force OCR on all pages.
         show_progress: Whether to show progress bars.
@@ -327,6 +332,7 @@ def pdf_to_markdown_sync(
     return asyncio.run(pdf_to_markdown(
         pdf_source=pdf_source,
         image_ocr_service=image_ocr_service,
+        table_service=table_service,
         pages=pages,
         force_ocr=force_ocr,
         show_progress=show_progress

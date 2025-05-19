@@ -123,11 +123,11 @@ class LLMBasedOCRService(OCRInterface):
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": self.ocr_prompt},
                         {
                             "type": "image_url",
                             "image_url": {"url": image_data_url, "detail": "high"}, # Use high detail for OCR
                         },
+                        {"type": "text", "text": self.ocr_prompt},
                     ],
                 }
             ]

@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from typing import List, Optional, Union
 
 from PIL.Image import Image
 
@@ -10,17 +11,18 @@ class OCRProcessingError(Exception):
 class OCRInterface(ABC):
 
     @abstractmethod
-    def get_best_size(self) -> tuple[int, int]:
+    def get_best_size(self) -> Optional[Union[tuple[int, int], int]]:
         """
-        Returns the recommended or optimal image size (width, height) for OCR.
+        Returns the recommended or optimal image rendering preference for OCR.
 
         Some OCR engines may perform best with images of a specific resolution or
         aspect ratio. This method provides guidance on that.
-        If no specific size is critical, it might return None or a generally safe large size.
 
         Returns:
-            tuple[int, int]: A tuple containing the recommended (width, height)
-                             or None if there's no specific recommendation.
+            Optional[Union[tuple[int, int], int]]: 
+                - A tuple (width, height) for specific dimensions.
+                - An int for a specific DPI.
+                - None if there's no specific recommendation (a default DPI will be used).
         """
         pass
 
