@@ -68,6 +68,98 @@ pip install pdf-to-markdown[async_sync_env]
 
 This installs `nest_asyncio`, which helps the library manage nested event loops gracefully. The library will attempt to use `nest_asyncio` if it's available, falling back to standard asyncio behavior otherwise (which may lead to the aforementioned `RuntimeError`s in nested loop scenarios).
 
+### Model Choice Considerations
+
+When selecting an LLM for OCR, consider factors like accuracy, speed, and cost. According to benchmark results from the [Omni OCR Benchmark](https://github.com/getomni-ai/benchmark) (as of the time of writing), Google's `gemini-2.0-flash` (or newer flash versions) is often highlighted as a strong contender for its balance of good performance, speed, and cost-effectiveness for OCR tasks. However, always refer to the latest benchmark data and your specific project requirements when making a decision.
+
+## Usage
+
+This plugin is designed to be used as a MarkItDown converter. After you install this package.
+You can use it programmatically:
+
+```python
+from markitdown import MarkItDown
+
+# Optionally, provide your LLM client and model for OCR fallback and default table detection
+llm_client = ...  # e.g., sync or async OpenAI client (note: for gemini usage see example below)
+llm_model = "gpt-4.1-mini"
+
+mid = MarkItDown(
+    enable_plugins=True     # Mandatory
+    llm_client=llm_client,  # Mandatory
+    llm_model=llm_model,    # Mandatory
+)
+path_to_pdf = "your-path-to.pdf"
+result = mid.convert(path_to_pdf)
+    print(result.markdown)
+```
+
+## Configuration
+- You can provide your own OCR service (`custom_pdf_ocr_service`) or use the built-in LLM-based OCR (requires an OpenAI-compatible client and model).
+- Similarly, you can provide your own table detection service (`table_detection_service`) or use the built-in `LLMBasedTableDetector` (which also uses the configured LLM client and model if provided).
+- The plugin will automatically decide when to use OCR based on page content heuristics and table detection results.
+
+## Notes
+- **Performance**: Because the plugin prioritizes correctness and completeness, processing may be slower than pure text extractors, especially for scanned or image-heavy PDFs.
+- **LLM Costs**: Using LLM-based OCR may incur API costs depending on your provider and the number of pages/images processed.
+
+## Optional Arguments
+
+You can customize the behavior of the plugin by providing the following optional arguments when constructing the `MarkItDown` instance or when calling `convert`:
+
+### Constructor Arguments (for `MarkItDown`)
+- **`custom_pdf_ocr_service`**: An instance of a custom OCR service implementing the `OCRInterface`. If provided, this will be used for all OCR tasks instead of the built-in LLM-based OCR.
+- **`table_detection_service`**: An instance of a custom table detection service implementing the `TableDetectionInterface`. If provided, this will be used for table detection.
+- **`llm_client`**: An OpenAI-compatible client instance (or similar). If provided (along with `llm_model`), it will be used for:
+    - The default `LLMBasedOCRService` (if `custom_pdf_ocr_service` is not given).
+    - The default `LLMBasedTableDetector` (if `table_detection_service` is not given).
+- **`llm_model`**: The model name to use with the LLM client (e.g., `\"gpt-4.1-mini\"`).
+- **`show_progress`**: (bool, default `False`) If `True`, shows progress bars during processing (requires `tqdm`).
+
+### Per-Conversion Arguments (for `convert`)
+- **`pages`**: A list of page indices to process. If not provided, all pages are processed.
+- **`force_ocr`**: (bool, default `False`) If `True`, forces OCR on all pages, even if text extraction is possible.
+- **`show_progress`**: (bool, default `False`) If `True`, shows progress bars for this conversion. (requires `tqdm`).
+
+### Example Argument Usage
+
+```python
+from markitdown import MarkItDown
+from openai import OpenAI
+
+llm_client = OpenAI(api_key="sk-...")
+llm_model = "gpt-4.1-mini"
+
+mid = MarkItDown(
+    enable_plugins=True,   # mandatory
+    llm_client=llm_client, # mandatory
+    llm_model=llm_model,   # mandatory
+    show_progress=True,    # Not mandatory: default=False
+    ocr_service=None,      # Not mandatory: default=None  (your own OCR service that implements the OCRInterface)
+    table_detection_service=None,   # Not mandatory: default=None (your own Table Detection service that implements TableDetectionInterface)
+)
+pdf_path = "path to your.pdf"
+result = mid.convert(
+    pdf_path,
+    show_progress=True, # default to constructor set value
+    force_ocr=True,     # default to False
+    pages=[0, 1, 2]     # default to None = all pages
+)
+print(result.markdown)
+```
+
+**Notes:**
+- If you provide both `custom_pdf_ocr_service` and `llm_client`/`llm_model`, the custom `custom_pdf_ocr_service` takes precedence for OCR.
+- If you provide both `table_detection_service` and `llm_client`/`llm_model`, the custom `table_detection_service` takes precedence for table detection.
+- If an `llm_client` and `llm_model` are provided:
+    - And no `custom_pdf_ocr_service` is given, `LLMBasedOCRService` will be used.
+    - And no `table_detection_service` is given, `LLMBasedTableDetector` will be used.
+- If neither OCR configuration (custom or LLM-based) is provided, the plugin will not be able to perform OCR and will return an error for non-readable pages.
+- If no table detection configuration is provided (custom or LLM-based), table detection will rely solely on `pymupdf4llm`'s capabilities (strategy='lines_strict').
+- `show_progress` can be set globally (in the constructor) or per conversion.
+- `pages` allows you to process only a subset of pages.
+- `force_ocr` is useful for scanned PDFs or when you want to ensure all content is processed via OCR.
+
 ## Using as a Standalone Library
 
 Besides its use as a MarkItDown plugin, `pdf-to-markdown` can also be used as a standalone Python library to convert PDF content directly.
@@ -198,97 +290,6 @@ if __name__ == "__main__":
 6.  **Process Results**: (As before)
 
 This setup allows you to leverage the PDF parsing and OCR capabilities of the package in any Python application, choosing between asynchronous or synchronous execution and different LLM backends based on your needs.
-
-### Model Choice Considerations
-
-When selecting an LLM for OCR, consider factors like accuracy, speed, and cost. According to benchmark results from the [Omni OCR Benchmark](https://github.com/getomni-ai/benchmark) (as of the time of writing), Google's `gemini-2.0-flash` (or newer flash versions) is often highlighted as a strong contender for its balance of good performance, speed, and cost-effectiveness for OCR tasks. However, always refer to the latest benchmark data and your specific project requirements when making a decision.
-
-## Usage
-
-This plugin is designed to be used as a MarkItDown converter. After you install this package.
-You can use it programmatically:
-
-```python
-from markitdown import MarkItDown
-
-# Optionally, provide your LLM client and model for OCR fallback and default table detection
-llm_client = ...  # e.g., sync or async OpenAI client (note for gemini usage see example above)
-llm_model = "gpt-4.1-mini"
-
-mid = MarkItDown(
-    enable_plugins=True     # Mandatory
-    llm_client=llm_client,  # Mandatory
-    llm_model=llm_model,    # Mandatory
-)
-path_to_pdf = "your-path-to.pdf"
-result = mid.convert(path_to_pdf)
-    print(result.markdown)
-```
-
-## Configuration
-- You can provide your own OCR service (`custom_pdf_ocr_service`) or use the built-in LLM-based OCR (requires an OpenAI-compatible client and model).
-- Similarly, you can provide your own table detection service (`table_detection_service`) or use the built-in `LLMBasedTableDetector` (which also uses the configured LLM client and model if provided).
-- The plugin will automatically decide when to use OCR based on page content heuristics and table detection results.
-
-## Notes
-- **Performance**: Because the plugin prioritizes correctness and completeness, processing may be slower than pure text extractors, especially for scanned or image-heavy PDFs.
-- **LLM Costs**: Using LLM-based OCR may incur API costs depending on your provider and the number of pages/images processed.
-
-## Optional Arguments
-
-You can customize the behavior of the plugin by providing the following optional arguments when constructing the `MarkItDown` instance or when calling `convert`:
-
-### Constructor Arguments (for `MarkItDown`)
-- **`custom_pdf_ocr_service`**: An instance of a custom OCR service implementing the `OCRInterface`. If provided, this will be used for all OCR tasks instead of the built-in LLM-based OCR.
-- **`table_detection_service`**: An instance of a custom table detection service implementing the `TableDetectionInterface`. If provided, this will be used for table detection.
-- **`llm_client`**: An OpenAI-compatible client instance (or similar). If provided (along with `llm_model`), it will be used for:
-    - The default `LLMBasedOCRService` (if `custom_pdf_ocr_service` is not given).
-    - The default `LLMBasedTableDetector` (if `table_detection_service` is not given).
-- **`llm_model`**: The model name to use with the LLM client (e.g., `\"gpt-4.1-mini\"`).
-- **`show_progress`**: (bool, default `False`) If `True`, shows progress bars during processing (requires `tqdm`).
-
-### Per-Conversion Arguments (for `convert`)
-- **`pages`**: A list of page indices to process. If not provided, all pages are processed.
-- **`force_ocr`**: (bool, default `False`) If `True`, forces OCR on all pages, even if text extraction is possible.
-- **`show_progress`**: (bool, default `False`) If `True`, shows progress bars for this conversion. (requires `tqdm`).
-
-### Example Argument Usage
-
-```python
-from markitdown import MarkItDown
-from openai import OpenAI
-
-llm_client = OpenAI(api_key="sk-...")
-llm_model = "gpt-4.1-mini"
-
-mid = MarkItDown(
-    enable_plugins=True,   # mandatory
-    llm_client=llm_client, # mandatory
-    llm_model=llm_model,   # mandatory
-    ocr_service=None,      # Not mandatory: default=None  (your own OCR service that implements the OCRInterface)
-    table_detection_service=None,   # Not mandatory: default=None (your own Table Detection service that implements TableDetectionInterface)
-)
-pdf_path = "path to your.pdf"
-result = mid.convert(
-    pdf_path,
-    force_ocr=True,     # default to False
-    show_progress=True, # default to False
-    pages=[0, 1, 2]     # default to None = all pages
-)
-print(result.markdown)
-```
-
-**Notes:**
-- If you provide both `custom_pdf_ocr_service` and `llm_client`/`llm_model`, the custom `custom_pdf_ocr_service` takes precedence for OCR.
-- If you provide both `table_detection_service` and `llm_client`/`llm_model`, the custom `table_detection_service` takes precedence for table detection.
-- If an `llm_client` and `llm_model` are provided:
-    - And no `custom_pdf_ocr_service` is given, `LLMBasedOCRService` will be used.
-    - And no `table_detection_service` is given, `LLMBasedTableDetector` will be used.
-- If neither OCR configuration (custom or LLM-based) is provided, the plugin will not be able to perform OCR and will return an error for non-readable pages.
-- If no table detection configuration is provided (custom or LLM-based), table detection will rely solely on `pymupdf4llm`'s capabilities (strategy='lines_strict').
-- `show_progress` can be set globally (in the constructor) or per conversion.
-- `pages` allows you to process only a subset of pages.
-- `force_ocr` is useful for scanned PDFs or when you want to ensure all content is processed via OCR.
 
 ## License
 
