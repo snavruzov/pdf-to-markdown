@@ -88,20 +88,27 @@ import os # For accessing environment variables
 
 # --- Option 1: Setup LLM Client (Example using OpenAI) ---
 # Make sure to install it: pip install openai
-from openai import OpenAI
+from openai import OpenAI, AsyncOpenAI
 
 # It's recommended to set your API key as an environment variable for security.
 # e.g., export OPENAI_API_KEY='your_api_key_here'
 # If the OPENAI_API_KEY environment variable is set, the client will use it automatically.
 # Otherwise, you can pass it directly: OpenAI(api_key="YOUR_API_KEY")
-openai_client = OpenAI()
-# print("OpenAI client initialized. Ensure your OPENAI_API_KEY is set or passed directly.")
-openai_model = "gpt-4o" # Or your preferred OpenAI model, e.g., "gpt-4-turbo"
+
+# Synchronous OpenAI Client
+sync_openai_client = OpenAI()
+
+# Asynchronous OpenAI Client
+async_openai_client = AsyncOpenAI()
+
+# print("OpenAI clients initialized. Ensure your OPENAI_API_KEY is set or passed directly.")
+openai_model = "gpt-4o-mini" # Or your preferred OpenAI model, e.g., "gpt-4-turbo"
 
 # --- Option 2: Setup LLM Client (Example using Google Gemini via OpenAI-compatible API) ---
 # (Code for Google Gemini client setup omitted for brevity, same as before)
 
-llm_client_to_use = openai_client # Choose which client to use
+llm_client_to_use = async_openai_client # Choose which client to use (e.g., async_openai_client or sync_openai_client)
+                                        # For best performance with the library's async core, AsyncOpenAI is generally preferred.
 llm_model_to_use = openai_model   # Choose the corresponding model
 
 # --- Initialize OCR Service ---

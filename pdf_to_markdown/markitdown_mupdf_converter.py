@@ -57,7 +57,7 @@ def register_converters(markitdown: MarkItDown, **kwargs_from_markitdown_init):
     kwargs_from_markitdown_init contains arguments passed to MarkItDown's constructor.
     """
     # Extract potential OCR configurations from kwargs
-    ocr_service_instance = kwargs_from_markitdown_init.get("custom_pdf_ocr_service") # Explicit override for OCR
+    ocr_service_instance = kwargs_from_markitdown_init.get("ocr_service") # Explicit override for OCR
     table_detection_service_instance = kwargs_from_markitdown_init.get("table_detection_service")
     llm_client = kwargs_from_markitdown_init.get("llm_client")
     llm_model = kwargs_from_markitdown_init.get("llm_model")
@@ -133,7 +133,7 @@ class MuPdfMarkitdownConverter(DocumentConverter):
                 show_progress = other_config.get('show_progress', False) # Use .get for safer access
                 ocr_prompt = other_config.get('ocr_prompt') # Allow specific OCR prompt override
                 
-                ocr_service_kwargs = {k: v for k, v in other_config.items() if k not in ['show_progress', 'ocr_prompt', 'table_detection_prompt', 'max_response_validation_attempts']}
+                ocr_service_kwargs = {k: v for k, v in other_config.items() if k not in ['show_progress', 'ocr_prompt']}
                 if ocr_prompt: ocr_service_kwargs['ocr_prompt'] = ocr_prompt
 
                 self.ocr_service = LLMBasedOCRService(
@@ -165,7 +165,7 @@ class MuPdfMarkitdownConverter(DocumentConverter):
             try:
                 # Extract specific config for LLMBasedTableDetector or pass all of other_config
                 # For example, if LLMBasedTableDetector takes a specific prompt or validation attempts
-                table_detector_kwargs = {k: v for k, v in other_config.items() if k not in ['show_progress', 'ocr_prompt']}
+                table_detector_kwargs = {k: v for k, v in other_config.items() if k not in ['show_progress', 'table_detection_prompt', 'max_table_detection_response_validation_attempts']}
                 # Example: if LLMBasedTableDetector has specific init args like 'table_detection_prompt' or 'max_response_validation_attempts'
                 # table_detection_prompt = other_config.get('table_detection_prompt')
                 # if table_detection_prompt: table_detector_kwargs['table_detection_prompt'] = table_detection_prompt

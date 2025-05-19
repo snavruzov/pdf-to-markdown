@@ -65,7 +65,7 @@ class LLMBasedTableDetector(TableDetectionInterface):
                 )
 
         self.table_detection_prompt = kwargs.get("table_detection_prompt", DEFAULT_TABLE_DETECTION_PROMPT)
-        self.max_response_validation_attempts = kwargs.get("max_response_validation_attempts", MAX_RESPONSE_VALIDATION_ATTEMPTS)
+        self.max_response_validation_attempts = kwargs.get("max_table_detection_response_validation_attempts", MAX_RESPONSE_VALIDATION_ATTEMPTS)
 
         logger.info(
             f"LLMBasedTableDetector initialized with model: {self.llm_model}, "

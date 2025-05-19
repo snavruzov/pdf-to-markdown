@@ -1,5 +1,5 @@
 import logging
-from typing import List, Any, Optional
+from typing import List, Any, Optional, Union
 import asyncio
 import base64
 import io
@@ -105,7 +105,7 @@ class LLMBasedOCRService(OCRInterface):
 
         logger.info(f"LLMBasedOCRService initialized with model: {self.llm_model}, client type: {type(llm_client).__name__}, create_is_async: {self._create_is_async}, prompt: '{self.ocr_prompt[:50]}...'")
 
-    def get_best_size(self) -> Optional[tuple[int, int]]:
+    def get_best_size(self) -> Optional[Union[tuple[int, int], int]]:
         """
         Returns the optimal image size (width, height) for this OCR model.
         GPT-4o (and similar models) typically handle various resolutions but have limits.
