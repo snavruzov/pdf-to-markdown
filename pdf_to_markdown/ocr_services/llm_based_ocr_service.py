@@ -26,10 +26,10 @@ Parse this image in structured markdown format.
 -   Prioritize the logical relationships between data elements. Structure the output to clearly represent these relationships, even if it deviates from the original layout. Focus on grouping related information (e.g., field labels with their values, table headers with corresponding data).
 -   Use whitespace, indentation, and line breaks to enhance readability and indicate hierarchy. Avoid strictly mirroring the visual layout if it hinders clarity.
 -   For complex (nested) tables, ensure that the logical structure is paramount. Individual cell values and nested tables should be clearly separated and grouped to maintain their semantic connections.
--   Use [x] or \[ \] syntax for checkboxes.
+-   Use [x] or [ ] syntax for checkboxes.
 -   If the image contains no discernible text or tables, then give a detailed caption of the image.
 -   Please, only return the structured markdown text, no other text, confirmation or comments.
--   Don't surround the text with markdown \`\`\` or \`\`\`.
+-   Don't surround the text with markdown code fences (e.g. ```markdown).
 """
 
 # Helper function for tenacity to identify rate limit errors

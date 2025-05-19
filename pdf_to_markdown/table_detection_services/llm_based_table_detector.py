@@ -29,7 +29,7 @@ def _is_rate_limit_error(exception: Exception) -> bool:
         return True
     return False
 
-class LLMBasedTableDetector(TableDetectionInterface): # Updated inheritance
+class LLMBasedTableDetector(TableDetectionInterface):
     """
     An implementation of TableDetectionInterface that uses a Large Language Model (LLM)
     to detect tables in images.
@@ -61,7 +61,7 @@ class LLMBasedTableDetector(TableDetectionInterface): # Updated inheritance
         )
 
     def get_best_size(self) -> Optional[Union[tuple[int, int], int]]:
-        return 150
+        return 150 # DPI
 
     def _pil_to_base64_data_uri(self, image: Image.Image, format="PNG") -> str:
         buffered = io.BytesIO()
