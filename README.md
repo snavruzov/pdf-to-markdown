@@ -52,6 +52,22 @@ All dependencies are listed in `pyproject.toml`.
    ```
    (If this package were published on PyPI, you would typically use `pip install pdf-to-markdown`.)
 
+### Optional Dependency for Synchronous APIs in Asynchronous Environments
+
+If you plan to use the synchronous API functions (like `pdf_to_markdown_sync` or `LLMBasedTableDetector.detect_tables_on_page` when it internally runs an async client) in an environment that already has an active asyncio event loop (such as Jupyter notebooks or certain GUI frameworks), you might encounter `RuntimeError`s related to nested event loops.
+
+To enable smoother operation in these environments, you can install an optional dependency when installing this package:
+
+```bash
+pip install .[async_sync_env]
+```
+Or, if installing from PyPI (once published):
+```bash
+pip install pdf-to-markdown[async_sync_env]
+```
+
+This installs `nest_asyncio`, which helps the library manage nested event loops gracefully. The library will attempt to use `nest_asyncio` if it's available, falling back to standard asyncio behavior otherwise (which may lead to the aforementioned `RuntimeError`s in nested loop scenarios).
+
 ## Using as a Standalone Library
 
 Besides its use as a MarkItDown plugin, `pdf-to-markdown` can also be used as a standalone Python library to convert PDF content directly.
