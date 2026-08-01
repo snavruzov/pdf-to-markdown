@@ -1,8 +1,11 @@
 import logging
+import uuid
+import requests
 from typing import List, Any, Optional, Union
 import asyncio
 import base64
 import io
+import os
 import re # Import re module
 from tenacity import retry, stop_after_delay, wait_exponential, retry_if_exception, wait_random
 
@@ -101,6 +104,7 @@ class LLMBasedOCRService(OCRInterface):
         self.show_progress = show_progress
         # Default prompt focuses on text extraction, but can be overridden
         self.ocr_prompt = kwargs.get("ocr_prompt", DEFAULT_OCR_PROMPT)
+        self.use_giga_chat = kwargs.get("use_giga_chat", False)
         #self.max_tokens = kwargs.get("max_tokens", 2000) # Max tokens for the LLM response
 
         logger.info(f"LLMBasedOCRService initialized with model: {self.llm_model}, client type: {type(llm_client).__name__}, create_is_async: {self._create_is_async}, prompt: '{self.ocr_prompt[:50]}...'")
@@ -157,6 +161,32 @@ class LLMBasedOCRService(OCRInterface):
 
         return cleaned_text.strip() # Final strip for any residual whitespace
 
+    def _call_llm_for_ocr_giga(self, image_data_url: str, mime_type: str="image/png") -> str:
+        GIGA_TOKEN = os.getenv("GIGA_TOKEN", "")
+        random_file_id = str(uuid.uuid4())
+        # 1. Upload the image, get a file id
+        with open(image_data_url, "rb") as f:
+            upload = requests.post(
+                f"https://api.giga.chat/v1/files",
+                headers={"Authorization": f"Bearer {GIGA_TOKEN}"},
+                files={"file": (f"{random_file_id}.png", f, mime_type)},
+                data={"purpose": "general"},
+            )
+        upload.raise_for_status()
+        return upload.json()["id"]
+
+    def _delete_giga_file(self, file_id: Any) -> None:
+        GIGA_TOKEN = os.getenv("GIGA_TOKEN", "")
+
+        # 1. Delete the image
+        payload = {}
+        headers = {
+            'Accept': 'application/json',
+            f'Authorization': f'Bearer {GIGA_TOKEN}'
+        }
+        requests.request("POST", f"https://api.giga.chat/v1/files/{file_id}/delete",
+                                    headers=headers, data=payload)
+
     @retry(
         wait=wait_exponential(multiplier=1, min=2, max=30) + wait_random(0, 3), # Add up to 3s random jitter
         stop=stop_after_delay(600), # Stop retrying after 10 minutes
@@ -169,18 +199,29 @@ class LLMBasedOCRService(OCRInterface):
         Assumes an OpenAI-compatible client.
         """
         try:
-            messages = [
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": image_data_url, "detail": "high"}, # Use high detail for OCR
-                        },
-                        {"type": "text", "text": self.ocr_prompt},
-                    ],
-                }
-            ]
+            file_id = None
+            if self.use_giga_chat:
+                file_id = await asyncio.to_thread(self._call_llm_for_ocr_giga, image_data_url)
+                messages = [
+                    {
+                        "role": "user",
+                        "content": self.ocr_prompt,
+                        "attachments": [file_id],
+                    }
+                ]
+            else:
+                messages = [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": image_data_url, "detail": "high"}, # Use high detail for OCR
+                            },
+                            {"type": "text", "text": self.ocr_prompt},
+                        ],
+                    }
+                ]
             
             # This is an example for OpenAI client. Adjust if your client API differs.
             # Ensure your client's create method is awaitable if it's an async client.
@@ -203,6 +244,8 @@ class LLMBasedOCRService(OCRInterface):
             if response.choices and response.choices[0].message and response.choices[0].message.content:
                 raw_content = response.choices[0].message.content
                 cleaned_content = self._clean_llm_response(raw_content)
+                if file_id:
+                    await asyncio.to_thread(self._delete_giga_file, file_id)
                 return cleaned_content
             else:
                 logger.warning("LLM response was empty or not in expected format.")
