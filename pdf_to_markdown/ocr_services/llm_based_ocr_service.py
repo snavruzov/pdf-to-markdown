@@ -173,7 +173,8 @@ class LLMBasedOCRService(OCRInterface):
                 data={"purpose": "general"},
             )
         upload.raise_for_status()
-        return upload.json()["id"]
+        file_id = upload.json()["id"]
+        logger.info(f"File uploaded to Giga Chat with ID: {file_id}")
 
     def _delete_giga_file(self, file_id: Any) -> None:
         GIGA_TOKEN = os.getenv("GIGA_TOKEN", "")
@@ -201,6 +202,7 @@ class LLMBasedOCRService(OCRInterface):
         try:
             file_id = None
             if self.use_giga_chat:
+                logger.info(f"Using Giga Chat for OCR. Uploading image to Giga Chat.")
                 file_id = await asyncio.to_thread(self._call_llm_for_ocr_giga, image_data_url)
                 messages = [
                     {
